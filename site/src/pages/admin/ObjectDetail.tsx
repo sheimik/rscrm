@@ -1,40 +1,93 @@
+import { useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Edit, Plus, FileDown } from "lucide-react";
-import { mockBuildings, mockVisits, mockCustomers } from "@/lib/mockData";
-import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ArrowLeft, Edit, Plus, FileDown, Loader2, MapPin, Phone, User } from "lucide-react";
 import { toast } from "sonner";
+import { api } from "@/lib/api";
+import {
+  OBJECT_STATUS_LABELS,
+  OBJECT_TYPE_LABELS,
+  VISIT_STATUS_LABELS,
+  INTEREST_LABELS,
+  translateOrFallback,
+} from "@/lib/referenceData";
+import type { ApiCustomer, ApiObject, ApiVisit, PageResponse } from "@/lib/types";
 
 export default function ObjectDetail() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const building = mockBuildings.find(b => b.id === id);
 
-  if (!building) {
+  const {
+    data: objectData,
+    isLoading: isObjectLoading,
+    isError: isObjectError,
+    error: objectError,
+  } = useQuery<ApiObject, Error>({
+    queryKey: ["object", id],
+    queryFn: () => api.getObject(id as string),
+    enabled: Boolean(id),
+  });
+
+  const { data: visitsData, isLoading: isVisitsLoading } = useQuery<PageResponse<ApiVisit>, Error>({
+    queryKey: ["object-visits", id],
+    queryFn: () => api.getVisits({ object_id: id, limit: 100 }) as Promise<PageResponse<ApiVisit>>,
+    enabled: Boolean(id),
+    staleTime: 60_000,
+  });
+
+  const { data: customersData, isLoading: isCustomersLoading } = useQuery<PageResponse<ApiCustomer>, Error>({
+    queryKey: ["object-customers", id],
+    queryFn: () => api.getCustomers({ object_id: id, limit: 100 }) as Promise<PageResponse<ApiCustomer>>,
+    enabled: Boolean(id),
+    staleTime: 60_000,
+  });
+
+  const visits = visitsData?.items ?? [];
+  const customers = customersData?.items ?? [];
+
+  const uniqueUnits = useMemo(() => {
+    const units = new Set<string>();
+    customers.forEach((customer) => {
+      if (customer.unit_id) {
+        units.add(customer.unit_id);
+      }
+    });
+    return Array.from(units);
+  }, [customers]);
+
+  const handleAction = (action: string) => {
+    toast.info(`${action} пока недоступно`);
+  };
+
+  if (isObjectLoading) {
     return (
-      <div className="text-center">
-        <p className="text-muted-foreground">Объект не найден</p>
-        <Button onClick={() => navigate("/_admin/objects")} className="mt-4">
-          Вернуться к списку
+      <div className="flex h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isObjectError || !objectData) {
+    const message = objectError instanceof Error ? objectError.message : "";
+    return (
+      <div className="space-y-4 text-center">
+        <p className="text-muted-foreground">
+          {message.toLowerCase().includes("404") ? "Объект не найден" : "Не удалось загрузить объект"}
+        </p>
+        <Button onClick={() => navigate("/_admin/objects")}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Вернуться к списку
         </Button>
       </div>
     );
   }
 
-  const buildingVisits = mockVisits.filter(v => v.building === building.address);
-  const buildingCustomers = mockCustomers.filter(c => c.building === building.address);
-
-  const handleAction = (action: string) => {
-    toast.info(`Демо-режим: ${action}`);
-  };
-
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
           <Button
@@ -43,41 +96,34 @@ export default function ObjectDetail() {
             onClick={() => navigate("/_admin/objects")}
             className="mb-2"
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Назад к списку
+            <ArrowLeft className="mr-2 h-4 w-4" /> Назад к списку
           </Button>
-          <h1 className="text-3xl font-bold">{building.address}</h1>
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">{building.type}</Badge>
-            <Badge>{building.status}</Badge>
-            <Badge variant="secondary">{building.city} • {building.district}</Badge>
+          <h1 className="text-3xl font-bold">{objectData.address}</h1>
+          <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+            <Badge variant="outline">
+              {translateOrFallback(OBJECT_TYPE_LABELS, objectData.type)}
+            </Badge>
+            <Badge>{translateOrFallback(OBJECT_STATUS_LABELS, objectData.status)}</Badge>
+            {objectData.city?.name && (
+              <span className="flex items-center gap-1">
+                <MapPin className="h-3 w-3" />
+                {objectData.city?.name}
+                {objectData.district?.name ? ` • ${objectData.district.name}` : ""}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => handleAction("Редактировать")}>
-            <Edit className="mr-2 h-4 w-4" />
-            Редактировать
-          </Button>
-          <Button onClick={() => handleAction("Добавить визит")}>
-            <Plus className="mr-2 h-4 w-4" />
-            Добавить визит
-          </Button>
-          <Button variant="outline" onClick={() => handleAction("Экспорт по объекту")}>
-            <FileDown className="mr-2 h-4 w-4" />
-            Экспорт
-          </Button>
+          <Button variant="outline" onClick={() => handleAction("Экспорт по объекту")}> <FileDown className="mr-2 h-4 w-4" /> Экспорт</Button>
+          <Button onClick={() => handleAction("Редактировать")}> <Edit className="mr-2 h-4 w-4" /> Редактировать</Button>
         </div>
       </div>
 
-      {/* Tabs */}
       <Tabs defaultValue="general" className="w-full">
         <TabsList>
           <TabsTrigger value="general">Общее</TabsTrigger>
-          <TabsTrigger value="apartments">Квартиры/Юниты</TabsTrigger>
-          <TabsTrigger value="visits">Визиты</TabsTrigger>
-          <TabsTrigger value="comments">Комментарии</TabsTrigger>
-          <TabsTrigger value="files">Файлы</TabsTrigger>
-          <TabsTrigger value="history">История</TabsTrigger>
+          <TabsTrigger value="visits">Визиты ({visits.length})</TabsTrigger>
+          <TabsTrigger value="customers">Клиенты ({customers.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-4">
@@ -86,114 +132,81 @@ export default function ObjectDetail() {
               <CardHeader>
                 <CardTitle>Основная информация</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Адрес:</span>
-                  <span className="font-medium">{building.address}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Город:</span>
-                  <span className="font-medium">{building.city}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Район:</span>
-                  <span className="font-medium">{building.district}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Тип:</span>
-                  <span className="font-medium">{building.type}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Квартир/Юнитов:</span>
-                  <span className="font-medium">{building.apartmentsCount || "—"}</span>
-                </div>
+              <CardContent className="space-y-3">
+                <InfoRow label="Адрес" value={objectData.address} />
+                <InfoRow label="Тип" value={translateOrFallback(OBJECT_TYPE_LABELS, objectData.type)} />
+                <InfoRow label="Статус" value={translateOrFallback(OBJECT_STATUS_LABELS, objectData.status)} />
+                <InfoRow label="Город" value={objectData.city?.name || "—"} />
+                <InfoRow label="Район" value={objectData.district?.name || "—"} />
+                <InfoRow label="Ответственный" value={objectData.responsible_user?.full_name || "—"} />
+                <InfoRow label="Контакт" value={objectData.contact_name || "—"} />
+                <InfoRow label="Телефон контакта" value={objectData.contact_phone || "—"} />
+                <InfoRow
+                  label="Последний визит"
+                  value={objectData.last_visit_at ? new Date(objectData.last_visit_at).toLocaleString("ru-RU") : "—"}
+                />
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>Статистика</CardTitle>
+                <CardTitle>Связанные данные</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Всего визитов:</span>
-                  <span className="font-medium">{building.visitsCount}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Последний визит:</span>
-                  <span className="font-medium">{building.lastVisit}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Ответственный:</span>
-                  <span className="font-medium">{building.responsible}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Статус:</span>
-                  <Badge>{building.status}</Badge>
-                </div>
+              <CardContent className="space-y-3">
+                <InfoRow label="Визитов" value={objectData.visits_count ?? 0} />
+                <InfoRow label="Клиентов" value={customers.length} />
+                <InfoRow label="Уникальных юнитов" value={uniqueUnits.length} />
               </CardContent>
             </Card>
           </div>
-
-          {building.gps && (
-            <Card>
-              <CardHeader>
-                <CardTitle>GPS координаты</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Широта: {building.gps.lat}, Долгота: {building.gps.lng}
-                </p>
-                <div className="mt-4 flex h-64 items-center justify-center rounded-lg bg-muted">
-                  <p className="text-muted-foreground">Карта (заглушка)</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="apartments">
-          <Card>
-            <CardHeader>
-              <CardTitle>Список квартир/юнитов</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <ApartmentsTable buildingAddress={building.address} />
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="visits">
           <Card>
             <CardHeader>
-              <CardTitle>История визитов ({buildingVisits.length})</CardTitle>
+              <CardTitle>История визитов</CardTitle>
             </CardHeader>
             <CardContent>
-              {buildingVisits.length === 0 ? (
+              {isVisitsLoading ? (
+                <div className="flex justify-center py-8 text-muted-foreground">Загрузка визитов...</div>
+              ) : visits.length === 0 ? (
                 <p className="text-center text-muted-foreground">Визиты отсутствуют</p>
               ) : (
                 <div className="space-y-4">
-                  {buildingVisits.map((visit) => (
-                    <div key={visit.id} className="border-b border-border pb-4 last:border-0">
-                      <div className="flex items-start justify-between">
+                  {visits.map((visit) => (
+                    <div key={visit.id} className="rounded-lg border border-border p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="space-y-1">
-                          <p className="font-medium">{visit.date}</p>
                           <p className="text-sm text-muted-foreground">
-                            {visit.engineer} • кв. {visit.apartment}
+                            {visit.scheduled_at
+                              ? new Date(visit.scheduled_at).toLocaleString("ru-RU")
+                              : "Дата не назначена"}
                           </p>
-                          {visit.notes && (
-                            <p className="text-sm">{visit.notes}</p>
-                          )}
-                          {visit.interest.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {visit.interest.map((i) => (
-                                <Badge key={i} variant="secondary">{i}</Badge>
-                              ))}
-                            </div>
-                          )}
+                          <p className="font-medium">
+                            {visit.engineer?.full_name || "Инженер не указан"}
+                          </p>
                         </div>
-                        <Badge>{visit.status}</Badge>
+                        <Badge>{translateOrFallback(VISIT_STATUS_LABELS, visit.status)}</Badge>
                       </div>
+                      {visit.customer?.full_name && (
+                        <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                          <User className="h-3 w-3" /> {visit.customer.full_name}
+                        </div>
+                      )}
+                      {visit.customer?.phone && (
+                        <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                          <Phone className="h-3 w-3" /> {visit.customer.phone}
+                        </div>
+                      )}
+                      {visit.interests && visit.interests.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {visit.interests.map((interest) => (
+                            <Badge key={interest} variant="outline">
+                              {translateOrFallback(INTEREST_LABELS, interest)}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -202,35 +215,52 @@ export default function ObjectDetail() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="comments">
+        <TabsContent value="customers">
           <Card>
             <CardHeader>
-              <CardTitle>Комментарии</CardTitle>
+              <CardTitle>Клиенты</CardTitle>
             </CardHeader>
-            <CardContent>
-              <CommentsPanel />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="files">
-          <Card>
-            <CardHeader>
-              <CardTitle>Файлы</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FilesList />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="history">
-          <Card>
-            <CardHeader>
-              <CardTitle>История изменений</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <HistoryTable />
+            <CardContent className="overflow-x-auto">
+              {isCustomersLoading ? (
+                <div className="py-6 text-center text-muted-foreground">Загрузка клиентов...</div>
+              ) : customers.length === 0 ? (
+                <p className="text-center text-muted-foreground">Клиенты отсутствуют</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Имя</TableHead>
+                      <TableHead>Телефон</TableHead>
+                      <TableHead>Интересы</TableHead>
+                      <TableHead>Обновлён</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customers.map((customer) => (
+                      <TableRow key={customer.id}>
+                        <TableCell>{customer.full_name || "—"}</TableCell>
+                        <TableCell>{customer.phone || "—"}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {customer.interests && customer.interests.length > 0
+                              ? customer.interests.map((interest) => (
+                                  <Badge key={interest} variant="outline">
+                                    {interest}
+                                  </Badge>
+                                ))
+                              : "—"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {customer.updated_at
+                            ? new Date(customer.updated_at).toLocaleString("ru-RU")
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -239,118 +269,15 @@ export default function ObjectDetail() {
   );
 }
 
-function ApartmentsTable({ buildingAddress }: { buildingAddress: string }) {
-  const [q, setQ] = useState("");
-  const units = Array.from(new Set(
-    mockCustomers
-      .filter(c => c.building === buildingAddress)
-      .map(c => c.apartment)
-  ));
-  const rows = units.filter(u => !q || u.toLowerCase().includes(q.toLowerCase()));
+function InfoRow({ label, value }: { label: string; value: string | number | null | undefined }) {
+  const displayValue =
+    value === null || value === undefined || (typeof value === "string" && value.trim() === "")
+      ? "—"
+      : value;
   return (
-    <div className="space-y-3">
-      <Input placeholder="Поиск по номеру" value={q} onChange={e => setQ(e.target.value)} />
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Номер</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map(u => (
-              <TableRow key={u}>
-                <TableCell>{u}</TableCell>
-              </TableRow>
-            ))}
-            {rows.length === 0 && (
-              <TableRow>
-                <TableCell className="text-muted-foreground">Нет данных</TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-}
-
-function CommentsPanel() {
-  const [items, setItems] = useState<{ id: number; author: string; text: string; time: string }[]>([
-    { id: 1, author: "Админ", text: "Проверить подъезд А", time: "2025-10-28 12:00" },
-  ]);
-  const [text, setText] = useState("");
-  const add = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    setItems(prev => [{ id: Date.now(), author: "Вы", text: text.trim(), time: new Date().toISOString().slice(0,16).replace('T',' ') }, ...prev]);
-    setText("");
-  };
-  return (
-    <div className="space-y-3">
-      <form onSubmit={add} className="flex gap-2">
-        <Input placeholder="Добавить комментарий" value={text} onChange={e => setText(e.target.value)} />
-        <Button type="submit">Отправить</Button>
-      </form>
-      <div className="space-y-3">
-        {items.map(i => (
-          <div key={i.id} className="rounded-lg border p-3">
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>{i.author}</span>
-              <span>{i.time}</span>
-            </div>
-            <p className="mt-1">{i.text}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function FilesList() {
-  const files = [
-    { name: "photo_entrance.jpg", size: "1.2 MB" },
-    { name: "contract_sample.pdf", size: "320 KB" },
-  ];
-  return (
-    <div className="space-y-2">
-      {files.map(f => (
-        <div key={f.name} className="flex items-center justify-between rounded-lg border p-3">
-          <span className="font-medium">{f.name}</span>
-          <span className="text-sm text-muted-foreground">{f.size}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function HistoryTable() {
-  const rows = [
-    { time: "2025-10-28 16:20", user: "Админ", action: "update", diff: "status: Новый -> В работе" },
-    { time: "2025-10-27 09:10", user: "Иванов", action: "create", diff: "created" },
-  ];
-  return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Время</TableHead>
-            <TableHead>Сотрудник</TableHead>
-            <TableHead>Действие</TableHead>
-            <TableHead>Изменения</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((r, idx) => (
-            <TableRow key={idx} className="hover:bg-muted/50">
-              <TableCell>{r.time}</TableCell>
-              <TableCell>{r.user}</TableCell>
-              <TableCell>{r.action}</TableCell>
-              <TableCell className="text-muted-foreground">{r.diff}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="flex items-center justify-between text-sm">
+      <span className="text-muted-foreground">{label}:</span>
+      <span className="font-medium">{displayValue}</span>
     </div>
   );
 }

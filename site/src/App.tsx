@@ -23,8 +23,16 @@ import Profile from "./pages/cabinet/Profile";
 import CabinetAdd from "./pages/cabinet/Add";
 import CabinetCustomers from "./pages/cabinet/Customers";
 import NotFound from "./pages/NotFound";
+import { RequireAuth } from "./components/auth/RequireAuth";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -37,7 +45,14 @@ const App = () => (
           <Route path="/auth/login" element={<Login />} />
           
           {/* Admin Routes */}
-          <Route path="/_admin" element={<AdminLayout />}>
+          <Route
+            path="/_admin"
+            element={
+              <RequireAuth allowedRoles={["ADMIN", "SUPERVISOR"]}>
+                <AdminLayout />
+              </RequireAuth>
+            }
+          >
             <Route index element={<Navigate to="/_admin/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="objects" element={<Objects />} />
@@ -53,7 +68,14 @@ const App = () => (
           </Route>
 
           {/* Cabinet Routes */}
-          <Route path="/cabinet" element={<CabinetLayout />}>
+          <Route
+            path="/cabinet"
+            element={
+              <RequireAuth allowedRoles={["ENGINEER"]}>
+                <CabinetLayout />
+              </RequireAuth>
+            }
+          >
             <Route index element={<Navigate to="/cabinet/route" replace />} />
             <Route path="route" element={<RoutePage />} />
             <Route path="objects" element={<CabinetObjects />} />

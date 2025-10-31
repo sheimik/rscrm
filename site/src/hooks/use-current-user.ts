@@ -10,5 +10,7 @@ export function useCurrentUser() {
     queryKey: ["current-user"],
     queryFn: () => api.getCurrentUser(),
     staleTime: 5 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 }

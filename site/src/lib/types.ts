@@ -47,6 +47,17 @@ export interface UserCreatePayload {
   is_active?: boolean;
 }
 
+export interface UserUpdatePayload {
+  email?: string;
+  full_name?: string;
+  phone?: string | null;
+  role?: string;
+  city_id?: string | null;
+  district_id?: string | null;
+  is_active?: boolean;
+  password?: string;
+}
+
 export interface ApiObject {
   id: string;
   type: string;

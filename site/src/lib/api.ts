@@ -1,7 +1,7 @@
 /**
  * API клиент для взаимодействия с бэкендом
  */
-import type { ObjectCreatePayload, ObjectUpdatePayload, UserCreatePayload } from "./types";
+import type { ObjectCreatePayload, ObjectUpdatePayload, UserCreatePayload, UserUpdatePayload } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -256,6 +256,13 @@ export class ApiClient {
   async createUser(data: UserCreatePayload) {
     return this.request('/api/v1/users', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateUser(id: string, data: UserUpdatePayload) {
+    return this.request(`/api/v1/users/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   }

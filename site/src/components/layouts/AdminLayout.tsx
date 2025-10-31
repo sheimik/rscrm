@@ -13,6 +13,13 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { cn } from "@/lib/utils";
+import { useCurrentUser } from "@/hooks/use-current-user";
+
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Администратор",
+  SUPERVISOR: "Супервайзер",
+  ENGINEER: "Инженер",
+};
 
 const navigation = [
   { name: "Dashboard", href: "/_admin/dashboard", icon: LayoutDashboard },
@@ -29,6 +36,15 @@ const navigation = [
 
 export function AdminLayout() {
   const location = useLocation();
+  const { data: currentUser } = useCurrentUser();
+  const initials = currentUser?.full_name
+    ? currentUser.full_name
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? "")
+        .join("")
+    : "CRM";
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -61,11 +77,13 @@ export function AdminLayout() {
         <div className="border-t border-border p-4">
           <div className="flex items-center gap-3 rounded-lg bg-muted p-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
-              АА
+              {initials || "?"}
             </div>
             <div className="flex-1 text-sm">
-              <p className="font-medium text-foreground">Админов А.А.</p>
-              <p className="text-muted-foreground">Администратор</p>
+              <p className="font-medium text-foreground">{currentUser?.full_name || "—"}</p>
+              <p className="text-muted-foreground">
+                {ROLE_LABELS[currentUser?.role ?? ""] || ""}
+              </p>
             </div>
           </div>
         </div>

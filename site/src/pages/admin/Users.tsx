@@ -15,7 +15,8 @@ import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { ApiUser, UserCreatePayload } from "@/lib/types";
+import type { ApiUser, UserCreatePayload, UserUpdatePayload } from "@/lib/types";
+import { useCurrentUser } from "@/hooks/use-current-user";
 
 const ROLE_LABELS: Record<string, string> = {
   ENGINEER: "Инженер",
@@ -49,7 +50,9 @@ export default function Users() {
   const [q, setQ] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const { data: currentUser } = useCurrentUser();
   const defaultValues: UserFormData = {
     fullName: "",
     email: "",
@@ -66,7 +69,7 @@ export default function Users() {
     defaultValues,
   });
   const selectedCityId = form.watch("cityId");
-  const { data: usersData, isLoading } = useQuery<ApiUser[]>({
+  const { data: usersData, isLoading, isError, error } = useQuery<ApiUser[]>({
     queryKey: ['users'],
     queryFn: () => api.getUsers(),
   });
@@ -92,6 +95,23 @@ export default function Users() {
       toast.error(error?.message || "Ошибка при добавлении сотрудника");
     },
   });
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UserUpdatePayload }) =>
+      api.updateUser(id, data),
+    onMutate: ({ id }) => {
+      setUpdatingId(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success("Статус сотрудника обновлён");
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Не удалось обновить пользователя");
+    },
+    onSettled: () => {
+      setUpdatingId(null);
+    },
+  });
   const handleDialogChange = (open: boolean) => {
     setDialogOpen(open);
     if (!open) {
@@ -113,6 +133,18 @@ export default function Users() {
 
     createMutation.mutate(payload);
   };
+
+  const handleToggleActive = (user: ApiUser, nextValue: boolean) => {
+    if (currentUser?.role !== "ADMIN") {
+      toast.error("Недостаточно прав для изменения статуса");
+      return;
+    }
+
+    updateMutation.mutate({ id: user.id, data: { is_active: nextValue } });
+  };
+
+  const canManageUsers = currentUser?.role === "ADMIN";
+  
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -159,7 +191,7 @@ export default function Users() {
           <CardTitle>Сотрудники ({rows.length})</CardTitle>
           <Dialog open={dialogOpen} onOpenChange={handleDialogChange}>
             <DialogTrigger asChild>
-              <Button>
+              <Button disabled={!canManageUsers}>
                 <Plus className="mr-2 h-4 w-4" />
                 Добавить сотрудника
               </Button>
@@ -334,7 +366,7 @@ export default function Users() {
                     <Button type="button" variant="outline" onClick={() => handleDialogChange(false)}>
                       Отмена
                     </Button>
-                    <Button type="submit" disabled={createMutation.isPending}>
+                    <Button type="submit" disabled={!canManageUsers || createMutation.isPending}>
                       {createMutation.isPending ? "Добавление..." : "Добавить"}
                     </Button>
                   </DialogFooter>
@@ -343,6 +375,11 @@ export default function Users() {
             </DialogContent>
           </Dialog>
         </CardHeader>
+        {!canManageUsers && (
+          <p className="px-6 text-sm text-muted-foreground">
+            У вас нет прав на редактирование. Обратитесь к администратору.
+          </p>
+        )}
         <CardContent className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -362,6 +399,13 @@ export default function Users() {
                 <TableRow>
                   <TableCell colSpan={8} className="text-center text-muted-foreground">
                     Загрузка...
+                  </TableCell>
+                </TableRow>
+              ) : isError ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="space-y-1 text-center text-muted-foreground">
+                    <div>Не удалось загрузить сотрудников.</div>
+                    <div>{error instanceof Error ? error.message : "Попробуйте позже."}</div>
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
@@ -387,7 +431,12 @@ export default function Users() {
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      <Switch checked={user.is_active} disabled aria-readonly />
+                      <Switch
+                        checked={user.is_active}
+                        disabled={!canManageUsers || updatingId === user.id}
+                        onCheckedChange={(checked) => handleToggleActive(user, checked)}
+                        aria-label={"Переключить статус пользователя"}
+                      />
                     </TableCell>
                   </TableRow>
                 ))
