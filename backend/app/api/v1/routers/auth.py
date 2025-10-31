@@ -15,12 +15,16 @@ from app.core.security import (
     get_scopes_from_role,
 )
 from app.core.errors import UnauthorizedError
+from app.core.logging_config import get_logger
+from app.domain.services.audit_service import AuditService
+from app.infrastructure.db.models import ActionType
 from app.infrastructure.db.base import get_db
 from app.infrastructure.db.models import User, UserRole
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -29,18 +33,23 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     """OAuth2 Password Flow - получение JWT токенов"""
+    logger.info("Login attempt", email=form_data.username)
+    
     # Получаем пользователя по email (username в OAuth2)
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
     
     if not user:
+        logger.warning("Login failed: user not found", email=form_data.username)
         raise UnauthorizedError("Invalid email or password")
     
     if not user.is_active:
+        logger.warning("Login failed: user inactive", user_id=str(user.id), email=form_data.username)
         raise UnauthorizedError("User is inactive")
     
     # Проверяем пароль
     if not verify_password(form_data.password, user.hashed_password):
+        logger.warning("Login failed: invalid password", user_id=str(user.id), email=form_data.username)
         raise UnauthorizedError("Invalid email or password")
     
     # Обновляем last_login_at
@@ -67,6 +76,28 @@ async def login(
             "sub": str(user.id),
             "email": user.email,
         }
+    )
+    
+    # Логируем в аудит
+    try:
+        audit_service = AuditService(db)
+        await audit_service.log_action(
+            action=ActionType.LOGIN,
+            entity_type="user",
+            entity_id=user.id,
+            actor_id=user.id,
+            after={"email": user.email, "role": user.role.value},
+        )
+        await db.commit()
+        logger.debug("Audit log created for login", user_id=str(user.id))
+    except Exception as e:
+        logger.error("Failed to create audit log for login", error=str(e), user_id=str(user.id))
+    
+    logger.info(
+        "Login successful",
+        user_id=str(user.id),
+        email=user.email,
+        role=user.role.value,
     )
     
     return TokenResponse(

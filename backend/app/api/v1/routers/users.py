@@ -2,8 +2,8 @@
 Роутер пользователей
 """
 from uuid import UUID
-from typing import List
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.v1.schemas.users import UserCreate, UserUpdate, UserOut, UserMe
 from app.api.v1.deps.security import get_current_user, require_roles
@@ -11,9 +11,12 @@ from app.infrastructure.db.base import get_db
 from app.infrastructure.db.models import User, UserRole
 from app.infrastructure.db.repositories.user_repository import UserRepository
 from app.core.security import get_password_hash
+from app.core.logging_config import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, or_
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 @router.get("/me", response_model=UserMe)
@@ -31,6 +34,42 @@ async def list_users(
     repo = UserRepository(db)
     users = await repo.find()
     return [UserOut.model_validate(u) for u in users]
+
+
+@router.get("/supervisors", response_model=List[UserOut])
+async def search_supervisors(
+    q: Optional[str] = Query(None, description="Поиск по имени или email"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Поиск супервайзеров для делегирования"""
+    logger.info(
+        "Searching supervisors",
+        user_id=str(current_user.id),
+        search_query=q,
+    )
+    
+    stmt = select(User).where(User.role == UserRole.SUPERVISOR)
+    
+    if q:
+        search_pattern = f"%{q.lower()}%"
+        stmt = stmt.where(
+            or_(
+                User.full_name.ilike(search_pattern),
+                User.email.ilike(search_pattern),
+            )
+        )
+    
+    result = await db.execute(stmt)
+    supervisors = list(result.scalars().all())
+    
+    logger.debug(
+        "Supervisors found",
+        user_id=str(current_user.id),
+        count=len(supervisors),
+    )
+    
+    return [UserOut.model_validate(s) for s in supervisors]
 
 
 @router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)

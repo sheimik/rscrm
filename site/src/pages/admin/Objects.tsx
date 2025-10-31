@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, FileDown, Upload, Filter, MapIcon, List } from "lucide-react";
+import { Plus, FileDown, Upload, Filter, MapIcon, List, UserPlus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -76,6 +76,10 @@ export default function Objects() {
   });
   const [createCityId, setCreateCityId] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [delegationModal, setDelegationModal] = useState<{ open: boolean; objectId: string | null }>({
+    open: false,
+    objectId: null,
+  });
 
   // Загружаем данные
   const { data: objectsData, isLoading } = useQuery({
@@ -541,18 +545,19 @@ export default function Objects() {
                 <TableHead>Последний визит</TableHead>
                 <TableHead>Ответственный</TableHead>
                 <TableHead>Контакт</TableHead>
+                <TableHead>Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground">
                     Загрузка...
                   </TableCell>
                 </TableRow>
               ) : filteredBuildings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground">
                     Нет данных. Измените фильтр или создайте запись.
                   </TableCell>
                 </TableRow>
@@ -560,32 +565,73 @@ export default function Objects() {
                 filteredBuildings.map((building: any) => (
                   <TableRow
                     key={building.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    className="hover:bg-muted/50"
                   >
-                    <TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
                       <Badge variant="outline">{typeMap[building.type] || building.type}</Badge>
                     </TableCell>
-                    <TableCell className="font-medium">{building.address}</TableCell>
-                    <TableCell>
+                    <TableCell
+                      className="font-medium cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
+                      {building.address}
+                    </TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
                       <div className="text-sm">
                         <div>{building.city?.name || "-"}</div>
                         <div className="text-muted-foreground">{building.district?.name || "-"}</div>
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
                       <Badge className={getStatusColor(building.status)}>
                         {statusMap[building.status] || building.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{building.visits_count || 0}</TableCell>
-                    <TableCell>{building.last_visit_at ? new Date(building.last_visit_at).toLocaleDateString('ru-RU') : "-"}</TableCell>
-                    <TableCell>{building.responsible_user?.full_name || "-"}</TableCell>
-                    <TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
+                      {building.visits_count || 0}
+                    </TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
+                      {building.last_visit_at ? new Date(building.last_visit_at).toLocaleDateString('ru-RU') : "-"}
+                    </TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
+                      {building.responsible_user?.full_name || "-"}
+                    </TableCell>
+                    <TableCell
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/_admin/objects/${building.id}`)}
+                    >
                       <div className="text-sm">
                         <div>{building.contact_name || "-"}</div>
                         <div className="text-muted-foreground text-xs">{building.contact_phone || ""}</div>
                       </div>
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDelegationModal({ open: true, objectId: building.id })}
+                      >
+                        <UserPlus className="h-4 w-4 mr-1" />
+                        Обход
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -606,7 +652,124 @@ export default function Objects() {
           </div>
         </Card>
       )}
+
+      {/* Модальное окно делегирования */}
+      <DelegationModal
+        open={delegationModal.open}
+        objectId={delegationModal.objectId}
+        onClose={() => setDelegationModal({ open: false, objectId: null })}
+        onSuccess={() => {
+          setDelegationModal({ open: false, objectId: null });
+          queryClient.invalidateQueries({ queryKey: ['objects'] });
+        }}
+      />
     </div>
     </>
+  );
+}
+
+// Компонент модального окна делегирования
+function DelegationModal({
+  open,
+  objectId,
+  onClose,
+  onSuccess,
+}: {
+  open: boolean;
+  objectId: string | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedSupervisor, setSelectedSupervisor] = useState<string | null>(null);
+
+  const { data: supervisors, isLoading } = useQuery({
+    queryKey: ['supervisors', searchQuery],
+    queryFn: () => api.searchSupervisors(searchQuery || undefined),
+    enabled: open,
+  });
+
+  const delegateMutation = useMutation({
+    mutationFn: (supervisorId: string) => {
+      if (!objectId) throw new Error("Object ID is required");
+      return api.delegateObject(objectId, supervisorId);
+    },
+    onSuccess: () => {
+      toast.success("Объект успешно делегирован супервайзеру");
+      onSuccess();
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Не удалось делегировать объект");
+    },
+  });
+
+  const handleDelegate = () => {
+    if (selectedSupervisor) {
+      delegateMutation.mutate(selectedSupervisor);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>Делегировать объект супервайзеру</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Поиск супервайзера</Label>
+            <Input
+              placeholder="Введите имя или email..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Выберите супервайзера</Label>
+            <div className="border rounded-md max-h-[300px] overflow-y-auto">
+              {isLoading ? (
+                <div className="p-4 text-center text-muted-foreground">
+                  Загрузка...
+                </div>
+              ) : supervisors && supervisors.length > 0 ? (
+                <div className="divide-y">
+                  {supervisors.map((supervisor: any) => (
+                    <div
+                      key={supervisor.id}
+                      className={`p-3 cursor-pointer hover:bg-muted ${
+                        selectedSupervisor === supervisor.id ? "bg-muted" : ""
+                      }`}
+                      onClick={() => setSelectedSupervisor(supervisor.id)}
+                    >
+                      <div className="font-medium">{supervisor.full_name}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {supervisor.email}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 text-center text-muted-foreground">
+                  {searchQuery ? "Супервайзеры не найдены" : "Начните вводить для поиска"}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Отмена
+            </Button>
+            <Button
+              onClick={handleDelegate}
+              disabled={!selectedSupervisor || delegateMutation.isPending}
+            >
+              {delegateMutation.isPending ? "Делегирование..." : "Делегировать"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

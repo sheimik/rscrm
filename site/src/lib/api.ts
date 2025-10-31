@@ -260,6 +260,46 @@ export class ApiClient {
     });
   }
 
+  // Audit
+  async getAuditLogs(params?: {
+    actor_id?: string;
+    entity_type?: string;
+    entity_id?: string;
+    action?: string;
+    since?: string;
+    until?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          query.append(key, String(value));
+        }
+      });
+    }
+    const queryString = query.toString();
+    return this.request(`/api/v1/audit${queryString ? '?' + queryString : ''}`);
+  }
+
+  // Supervisors
+  async searchSupervisors(q?: string) {
+    const query = new URLSearchParams();
+    if (q) {
+      query.append('q', q);
+    }
+    const queryString = query.toString();
+    return this.request(`/api/v1/users/supervisors${queryString ? '?' + queryString : ''}`);
+  }
+
+  // Object delegation
+  async delegateObject(objectId: string, supervisorId: string) {
+    return this.request(`/api/v1/objects/${objectId}/delegate?supervisor_id=${supervisorId}`, {
+      method: 'POST',
+    });
+  }
+
   async updateUser(id: string, data: UserUpdatePayload) {
     return this.request(`/api/v1/users/${id}`, {
       method: 'PATCH',

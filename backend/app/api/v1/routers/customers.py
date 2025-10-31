@@ -13,11 +13,14 @@ from app.infrastructure.db.models import User, Customer
 from app.core.pagination import get_pagination_offset
 from app.core.security import SCOPES
 from app.core.phone_normalization import normalize_phone
+from app.core.logging_config import get_logger
+from app.domain.services.audit_service import AuditService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from app.api.v1.schemas.common import mask_phone
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 @router.get("/", response_model=PageResponse[CustomerOut])
@@ -119,6 +122,13 @@ async def create_customer(
     db: AsyncSession = Depends(get_db),
 ):
     """Создать клиента"""
+    logger.info(
+        "Creating customer",
+        user_id=str(current_user.id),
+        user_name=current_user.full_name,
+        object_id=str(data.object_id) if hasattr(data, 'object_id') else None,
+    )
+    
     customer_data = data.model_dump()
     
     # Нормализуем телефон перед сохранением (для UNIQUE индекса)
@@ -130,6 +140,31 @@ async def create_customer(
     db.add(new_customer)
     await db.commit()
     await db.refresh(new_customer)
+    
+    # Логируем в аудит
+    try:
+        audit_service = AuditService(db)
+        after_data = {
+            "id": str(new_customer.id),
+            "object_id": str(new_customer.object_id),
+            "phone": "***" if new_customer.phone else None,  # Маскируем PII
+        }
+        await audit_service.log_create(
+            entity_type="customer",
+            entity_id=new_customer.id,
+            actor_id=current_user.id,
+            after=after_data,
+        )
+        await db.commit()
+        logger.debug("Audit log created for customer creation", customer_id=str(new_customer.id))
+    except Exception as e:
+        logger.error("Failed to create audit log", error=str(e), customer_id=str(new_customer.id))
+    
+    logger.info(
+        "Customer created successfully",
+        customer_id=str(new_customer.id),
+        user_id=str(current_user.id),
+    )
     
     return CustomerOut.model_validate(new_customer)
 
@@ -168,12 +203,30 @@ async def update_customer(
     db: AsyncSession = Depends(get_db),
 ):
     """Обновить клиента"""
+    logger.info(
+        "Updating customer",
+        customer_id=str(customer_id),
+        user_id=str(current_user.id),
+        user_name=current_user.full_name,
+    )
+    
     result = await db.execute(select(Customer).where(Customer.id == customer_id))
     customer = result.scalar_one_or_none()
     
     if not customer:
+        logger.warning(
+            "Customer not found for update",
+            customer_id=str(customer_id),
+            user_id=str(current_user.id),
+        )
         from app.core.errors import NotFoundError
         raise NotFoundError("Customer", customer_id)
+    
+    # Сохраняем старое состояние для аудита
+    before_data = {
+        "id": str(customer.id),
+        "object_id": str(customer.object_id),
+    }
     
     # Обновляем поля
     update_data = data.model_dump(exclude_unset=True)
@@ -183,10 +236,43 @@ async def update_customer(
         update_data["phone"] = normalize_phone(update_data["phone"])
     
     for key, value in update_data.items():
+        old_value = getattr(customer, key, None)
         setattr(customer, key, value)
+        logger.debug(
+            "Customer field updated",
+            customer_id=str(customer_id),
+            field=key,
+            old_value=str(old_value) if old_value is not None else None,
+            new_value=str(value) if value is not None else None,
+        )
     
     await db.commit()
     await db.refresh(customer)
+    
+    # Логируем в аудит
+    try:
+        audit_service = AuditService(db)
+        after_data = {
+            "id": str(customer.id),
+            "object_id": str(customer.object_id),
+        }
+        await audit_service.log_update(
+            entity_type="customer",
+            entity_id=customer.id,
+            actor_id=current_user.id,
+            before=before_data,
+            after=after_data,
+        )
+        await db.commit()
+        logger.debug("Audit log created for customer update", customer_id=str(customer_id))
+    except Exception as e:
+        logger.error("Failed to create audit log", error=str(e), customer_id=str(customer_id))
+    
+    logger.info(
+        "Customer updated successfully",
+        customer_id=str(customer_id),
+        user_id=str(current_user.id),
+    )
     
     # Проверка доступа к PII
     from app.core.security import get_scopes_from_role

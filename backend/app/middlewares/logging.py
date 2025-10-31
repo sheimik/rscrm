@@ -2,13 +2,13 @@
 Middleware для логирования запросов
 """
 import time
-import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.core.logging_config import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
@@ -68,11 +68,20 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 log_data["error"] = error
             
             if status_code >= 500:
-                logger.error("request_completed", **log_data)
+                logger.error(
+                    "Request completed with server error",
+                    **log_data
+                )
             elif status_code >= 400:
-                logger.warning("request_completed", **log_data)
+                logger.warning(
+                    "Request completed with client error",
+                    **log_data
+                )
             else:
-                logger.info("request_completed", **log_data)
+                logger.info(
+                    "Request completed successfully",
+                    **log_data
+                )
         
         return response
 
