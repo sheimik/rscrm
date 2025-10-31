@@ -1,7 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Building2, ClipboardCheck, TrendingUp, Phone, Plus, FileDown, Upload } from "lucide-react";
-import { mockBuildings, mockVisits, mockCustomers } from "@/lib/mockData";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -11,7 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 const objectSchema = z.object({
   type: z.string().min(1, "Выберите тип объекта"),
@@ -27,10 +28,38 @@ type ObjectFormData = z.infer<typeof objectSchema>;
 
 export default function Dashboard() {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const totalVisits = mockVisits.length;
-  const completedVisits = mockVisits.filter(v => v.status === "Завершён").length;
-  const avgRating = mockCustomers.reduce((sum, c) => sum + (c.rating || 0), 0) / mockCustomers.length;
-  const leadsToCall = mockCustomers.filter(c => c.convenientTime).length;
+  
+  // Загружаем данные через API
+  const { data: visitsData } = useQuery({
+    queryKey: ['visits', 'dashboard'],
+    queryFn: () => api.getVisits({ limit: 100 }),
+  });
+  
+  const { data: customersData } = useQuery({
+    queryKey: ['customers', 'dashboard'],
+    queryFn: () => api.getCustomers({ limit: 100 }),
+  });
+  
+  const { data: objectsData } = useQuery({
+    queryKey: ['objects', 'dashboard'],
+    queryFn: () => api.getObjects({ limit: 100 }),
+  });
+  
+  const { data: summaryData } = useQuery({
+    queryKey: ['analytics', 'summary'],
+    queryFn: () => api.getSummary('month'),
+  });
+  
+  const visits = visitsData?.items || [];
+  const customers = customersData?.items || [];
+  const objects = objectsData?.items || [];
+  
+  const totalVisits = visits.length;
+  const completedVisits = visits.filter(v => v.status === "DONE").length;
+  const avgRating = customers.length > 0
+    ? customers.reduce((sum: number, c: any) => sum + (c.provider_rating || 0), 0) / customers.length
+    : 0;
+  const leadsToCall = customers.filter((c: any) => c.preferred_call_time).length;
 
   const form = useForm<ObjectFormData>({
     resolver: zodResolver(objectSchema),
@@ -49,11 +78,54 @@ export default function Dashboard() {
     toast.info(`Демо-режим: ${action}`);
   };
 
-  const onSubmit = (data: ObjectFormData) => {
-    console.log("Новый объект:", data);
-    toast.success("Объект успешно создан (демо)");
-    setDialogOpen(false);
-    form.reset();
+  const onSubmit = async (data: ObjectFormData) => {
+    try {
+      // Получаем города для поиска ID
+      const cities = await api.getCities();
+      const city = cities.find(c => c.name === data.city);
+      if (!city) {
+        toast.error("Город не найден");
+        return;
+      }
+      
+      // Получаем районы для поиска ID
+      let districtId = undefined;
+      if (data.district) {
+        const districts = await api.getDistricts(city.id);
+        const district = districts.find(d => d.name === data.district);
+        districtId = district?.id;
+      }
+      
+      // Парсим GPS координаты
+      let gpsLat = undefined;
+      let gpsLng = undefined;
+      if (data.gps) {
+        const coords = data.gps.split(',').map(s => s.trim());
+        if (coords.length === 2) {
+          gpsLat = parseFloat(coords[0]);
+          gpsLng = parseFloat(coords[1]);
+        }
+      }
+      
+      await api.createObject({
+        type: data.type === "МКД" ? "MKD" : data.type === "Бизнес-центр" ? "BUSINESS_CENTER" : "SHOPPING_CENTER",
+        address: data.address,
+        city_id: city.id,
+        district_id: districtId,
+        gps_lat: gpsLat,
+        gps_lng: gpsLng,
+        status: "NEW",
+      });
+      
+      toast.success("Объект успешно создан");
+      setDialogOpen(false);
+      form.reset();
+      
+      // Обновляем данные
+      window.location.reload();
+    } catch (error: any) {
+      toast.error(error.message || "Ошибка при создании объекта");
+    }
   };
 
   return (
@@ -84,10 +156,10 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {mockBuildings.filter(b => b.status === "В работе").length}
+              {objects.filter(b => b.status === "INTEREST").length}
             </div>
             <p className="text-xs text-muted-foreground">
-              Из {mockBuildings.length} всего
+              Из {objects.length} всего
             </p>
           </CardContent>
         </Card>
@@ -289,21 +361,24 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {mockVisits.slice(0, 3).map((visit) => (
+              {visits.slice(0, 3).map((visit: any) => (
                 <div key={visit.id} className="flex items-start justify-between border-b border-border pb-3 last:border-0">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{visit.building}</p>
+                    <p className="text-sm font-medium">{visit.object?.address || "Объект"}</p>
                     <p className="text-xs text-muted-foreground">
-                      {visit.engineer} • {visit.date}
+                      {visit.engineer?.full_name || "Инженер"} • {visit.scheduled_at ? new Date(visit.scheduled_at).toLocaleString('ru-RU') : '-'}
                     </p>
                   </div>
                   <span className={`text-xs font-medium ${
-                    visit.status === "Завершён" ? "text-success" : "text-warning"
+                    visit.status === "DONE" ? "text-green-500" : "text-yellow-500"
                   }`}>
-                    {visit.status}
+                    {visit.status === "DONE" ? "Завершён" : visit.status === "PLANNED" ? "Запланирован" : visit.status}
                   </span>
                 </div>
               ))}
+              {visits.length === 0 && (
+                <p className="text-sm text-muted-foreground">Нет визитов</p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -314,26 +389,29 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {mockCustomers.filter(c => c.interests.length > 2).map((customer) => (
+              {customers.filter((c: any) => c.interests && c.interests.length > 2).slice(0, 3).map((customer: any) => (
                 <div key={customer.id} className="flex items-start justify-between border-b border-border pb-3 last:border-0">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{customer.name}</p>
+                    <p className="text-sm font-medium">{customer.full_name || "Клиент"}</p>
                     <p className="text-xs text-muted-foreground">
-                      {customer.building} • кв. {customer.apartment}
+                      {customer.object?.address || "Адрес"} • {customer.portrait_text || "-"}
                     </p>
                     <div className="flex flex-wrap gap-1">
-                      {customer.interests.map((interest) => (
+                      {customer.interests?.map((interest: string) => (
                         <span key={interest} className="rounded-md bg-muted px-2 py-0.5 text-xs">
                           {interest}
                         </span>
                       ))}
                     </div>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => handleAction(`Позвонить ${customer.name}`)}>
+                  <Button size="sm" variant="ghost" onClick={() => handleAction(`Позвонить ${customer.full_name}`)}>
                     <Phone className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
+              {customers.filter((c: any) => c.interests && c.interests.length > 2).length === 0 && (
+                <p className="text-sm text-muted-foreground">Нет клиентов с высоким интересом</p>
+              )}
             </div>
           </CardContent>
         </Card>

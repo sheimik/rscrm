@@ -21,6 +21,7 @@ class VisitRepository(BaseRepository[Visit]):
         self,
         engineer_id: Optional[UUID] = None,
         object_id: Optional[UUID] = None,
+        customer_id: Optional[UUID] = None,
         status: Optional[VisitStatus] = None,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
@@ -39,6 +40,9 @@ class VisitRepository(BaseRepository[Visit]):
         
         if object_id:
             conditions.append(Visit.object_id == object_id)
+        
+        if customer_id:
+            conditions.append(Visit.customer_id == customer_id)
         
         if status:
             conditions.append(Visit.status == status)

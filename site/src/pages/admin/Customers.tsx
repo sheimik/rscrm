@@ -4,20 +4,32 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { mockCustomers, services } from "@/lib/mockData";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+
+const services = ["INTERNET", "TV", "CCTV", "BABY_MONITOR"];
 
 export default function Customers() {
   const [q, setQ] = useState("");
   const [service, setService] = useState<string>("Все");
 
+  const { data: customersData, isLoading } = useQuery({
+    queryKey: ['customers', q, service !== "Все" ? service : null],
+    queryFn: () => api.getCustomers({
+      q: q || undefined,
+      interests: service !== "Все" ? service : undefined,
+      limit: 100,
+    }),
+  });
+
+  const customers = customersData?.items || [];
+
   const rows = useMemo(() => {
-    const ql = q.trim().toLowerCase();
-    return mockCustomers.filter(c => {
-      const byQ = !ql || [c.name, c.phone, c.building, c.apartment].some(x => x.toLowerCase().includes(ql));
-      const byService = service === "Все" || c.interests.includes(service);
-      return byQ && byService;
+    return customers.filter((c: any) => {
+      const byService = service === "Все" || c.interests?.includes(service);
+      return byService;
     });
-  }, [q, service]);
+  }, [customers, service]);
 
   return (
     <div className="space-y-4">
@@ -59,21 +71,35 @@ export default function Customers() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map(c => (
-                <TableRow key={c.id} className="hover:bg-muted/50">
-                  <TableCell>{c.name}</TableCell>
-                  <TableCell>{c.phone}</TableCell>
-                  <TableCell>{c.building}, кв. {c.apartment}</TableCell>
-                  <TableCell>{c.currentProvider ?? "-"}</TableCell>
-                  <TableCell>{c.rating ?? "-"}</TableCell>
-                  <TableCell className="space-x-1">
-                    {c.interests.map(i => (
-                      <Badge key={i} variant="outline">{i}</Badge>
-                    ))}
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    Загрузка...
                   </TableCell>
-                  <TableCell>{c.updatedAt}</TableCell>
                 </TableRow>
-              ))}
+              ) : rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    Нет клиентов
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((c: any) => (
+                  <TableRow key={c.id} className="hover:bg-muted/50">
+                    <TableCell>{c.full_name || "-"}</TableCell>
+                    <TableCell>{c.phone || "-"}</TableCell>
+                    <TableCell>{c.object?.address || "-"}, {c.portrait_text || "-"}</TableCell>
+                    <TableCell>{c.current_provider ?? "-"}</TableCell>
+                    <TableCell>{c.provider_rating ?? "-"}</TableCell>
+                    <TableCell className="space-x-1">
+                      {c.interests?.map((i: string) => (
+                        <Badge key={i} variant="outline">{i}</Badge>
+                      )) || "-"}
+                    </TableCell>
+                    <TableCell>{c.updated_at ? new Date(c.updated_at).toLocaleDateString('ru-RU') : "-"}</TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

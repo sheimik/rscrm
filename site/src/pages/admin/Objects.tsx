@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -12,8 +12,10 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Plus, FileDown, Upload, Filter, MapIcon, List } from "lucide-react";
-import { mockBuildings, Building, statuses, cities, districts, buildingTypes } from "@/lib/mockData";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
 import {
   Sheet,
   SheetContent,
@@ -32,6 +34,22 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 
+const statusMap: Record<string, string> = {
+  "NEW": "Новый",
+  "INTEREST": "В работе",
+  "CALLBACK": "Ожидание",
+  "DONE": "Завершён",
+  "REJECTED": "Отказ",
+};
+
+const typeMap: Record<string, string> = {
+  "MKD": "МКД",
+  "BUSINESS_CENTER": "Бизнес-центр",
+  "SHOPPING_CENTER": "ТЦ",
+  "SCHOOL": "Школа",
+  "HOSPITAL": "Больница",
+};
+
 export default function Objects() {
   const navigate = useNavigate();
   const [view, setView] = useState<"list" | "map">("list");
@@ -41,24 +59,52 @@ export default function Objects() {
   const [selectedType, setSelectedType] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
 
-  const filteredBuildings = mockBuildings.filter((building) => {
-    const matchesSearch = building.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         building.city.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCity = selectedCity === "all" || building.city === selectedCity;
-    const matchesDistrict = selectedDistrict === "all" || building.district === selectedDistrict;
-    const matchesType = selectedType === "all" || building.type === selectedType;
-    const matchesStatus = selectedStatus === "all" || building.status === selectedStatus;
-    
-    return matchesSearch && matchesCity && matchesDistrict && matchesType && matchesStatus;
+  // Загружаем данные
+  const { data: objectsData, isLoading } = useQuery({
+    queryKey: ['objects', selectedCity !== "all" ? selectedCity : null, selectedDistrict !== "all" ? selectedDistrict : null, selectedStatus !== "all" ? selectedStatus : null, searchQuery],
+    queryFn: () => api.getObjects({
+      city_id: selectedCity !== "all" ? selectedCity : undefined,
+      district_id: selectedDistrict !== "all" ? selectedDistrict : undefined,
+      status: selectedStatus !== "all" ? selectedStatus as any : undefined,
+      search: searchQuery || undefined,
+      limit: 100,
+    }),
   });
+
+  const { data: citiesData } = useQuery({
+    queryKey: ['cities'],
+    queryFn: () => api.getCities(),
+  });
+
+  const { data: districtsData } = useQuery({
+    queryKey: ['districts', selectedCity !== "all" ? selectedCity : null],
+    queryFn: () => api.getDistricts(selectedCity !== "all" ? selectedCity : undefined),
+    enabled: selectedCity !== "all",
+  });
+
+  const objects = objectsData?.items || [];
+  const cities = citiesData || [];
+  const districts = districtsData || [];
+
+  const filteredBuildings = useMemo(() => {
+    return objects.filter((obj: any) => {
+      const matchesSearch = !searchQuery || obj.address.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCity = selectedCity === "all" || obj.city_id === selectedCity;
+      const matchesDistrict = selectedDistrict === "all" || obj.district_id === selectedDistrict;
+      const matchesType = selectedType === "all" || obj.type === selectedType;
+      const matchesStatus = selectedStatus === "all" || obj.status === selectedStatus;
+      
+      return matchesSearch && matchesCity && matchesDistrict && matchesType && matchesStatus;
+    });
+  }, [objects, searchQuery, selectedCity, selectedDistrict, selectedType, selectedStatus]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "Новый": return "bg-blue-500";
-      case "В работе": return "bg-yellow-500";
-      case "Ожидание": return "bg-orange-500";
-      case "Завершён": return "bg-green-500";
-      case "Отказ": return "bg-red-500";
+      case "NEW": return "bg-blue-500";
+      case "INTEREST": return "bg-yellow-500";
+      case "CALLBACK": return "bg-orange-500";
+      case "DONE": return "bg-green-500";
+      case "REJECTED": return "bg-red-500";
       default: return "bg-gray-500";
     }
   };
@@ -101,9 +147,9 @@ export default function Objects() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все города</SelectItem>
-                      {cities.map((city) => (
-                        <SelectItem key={city} value={city}>
-                          {city}
+                      {cities.map((city: any) => (
+                        <SelectItem key={city.id} value={city.id}>
+                          {city.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -117,9 +163,9 @@ export default function Objects() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все районы</SelectItem>
-                      {districts.map((district) => (
-                        <SelectItem key={district} value={district}>
-                          {district}
+                      {districts.map((district: any) => (
+                        <SelectItem key={district.id} value={district.id}>
+                          {district.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -133,11 +179,11 @@ export default function Objects() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все типы</SelectItem>
-                      {buildingTypes.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="MKD">МКД</SelectItem>
+                      <SelectItem value="BUSINESS_CENTER">Бизнес-центр</SelectItem>
+                      <SelectItem value="SHOPPING_CENTER">ТЦ</SelectItem>
+                      <SelectItem value="SCHOOL">Школа</SelectItem>
+                      <SelectItem value="HOSPITAL">Больница</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -149,11 +195,11 @@ export default function Objects() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все статусы</SelectItem>
-                      {statuses.map((status) => (
-                        <SelectItem key={status} value={status}>
-                          {status}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="NEW">Новый</SelectItem>
+                      <SelectItem value="INTEREST">В работе</SelectItem>
+                      <SelectItem value="CALLBACK">Ожидание</SelectItem>
+                      <SelectItem value="DONE">Завершён</SelectItem>
+                      <SelectItem value="REJECTED">Отказ</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -207,37 +253,43 @@ export default function Objects() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredBuildings.length === 0 ? (
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    Загрузка...
+                  </TableCell>
+                </TableRow>
+              ) : filteredBuildings.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground">
                     Нет данных. Измените фильтр или создайте запись.
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredBuildings.map((building) => (
+                filteredBuildings.map((building: any) => (
                   <TableRow
                     key={building.id}
                     className="cursor-pointer hover:bg-muted/50"
                     onClick={() => navigate(`/_admin/objects/${building.id}`)}
                   >
                     <TableCell>
-                      <Badge variant="outline">{building.type}</Badge>
+                      <Badge variant="outline">{typeMap[building.type] || building.type}</Badge>
                     </TableCell>
                     <TableCell className="font-medium">{building.address}</TableCell>
                     <TableCell>
                       <div className="text-sm">
-                        <div>{building.city}</div>
-                        <div className="text-muted-foreground">{building.district}</div>
+                        <div>{building.city?.name || "-"}</div>
+                        <div className="text-muted-foreground">{building.district?.name || "-"}</div>
                       </div>
                     </TableCell>
                     <TableCell>
                       <Badge className={getStatusColor(building.status)}>
-                        {building.status}
+                        {statusMap[building.status] || building.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{building.visitsCount}</TableCell>
-                    <TableCell>{building.lastVisit}</TableCell>
-                    <TableCell>{building.responsible}</TableCell>
+                    <TableCell>{building.visits_count || 0}</TableCell>
+                    <TableCell>{building.last_visit_at ? new Date(building.last_visit_at).toLocaleDateString('ru-RU') : "-"}</TableCell>
+                    <TableCell>{building.responsible_user?.full_name || "-"}</TableCell>
                   </TableRow>
                 ))
               )}
