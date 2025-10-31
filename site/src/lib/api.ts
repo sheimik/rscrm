@@ -282,6 +282,23 @@ export class ApiClient {
     const queryString = query.toString();
     return this.request(`/api/v1/audit${queryString ? '?' + queryString : ''}`);
   }
+
+  // Supervisors
+  async searchSupervisors(q?: string) {
+    const query = new URLSearchParams();
+    if (q) {
+      query.append('q', q);
+    }
+    const queryString = query.toString();
+    return this.request(`/api/v1/users/supervisors${queryString ? '?' + queryString : ''}`);
+  }
+
+  // Object delegation
+  async delegateObject(objectId: string, supervisorId: string) {
+    return this.request(`/api/v1/objects/${objectId}/delegate?supervisor_id=${supervisorId}`, {
+      method: 'POST',
+    });
+  }
 }
 
 export const api = new ApiClient();
