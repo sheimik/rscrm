@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,20 +8,38 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { mockUsers, User, cities, districts } from "@/lib/mockData";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import type { ApiUser, UserCreatePayload } from "@/lib/types";
+
+const ROLE_LABELS: Record<string, string> = {
+  ENGINEER: "Инженер",
+  SUPERVISOR: "Супервайзер",
+  ADMIN: "Админ",
+};
+
+const ROLE_FILTER_OPTIONS = [
+  { value: "ALL", label: "Все" },
+  { value: "ENGINEER", label: ROLE_LABELS.ENGINEER },
+  { value: "SUPERVISOR", label: ROLE_LABELS.SUPERVISOR },
+  { value: "ADMIN", label: ROLE_LABELS.ADMIN },
+];
 
 const userSchema = z.object({
-  name: z.string().min(2, "ФИО должно содержать минимум 2 символа"),
-  role: z.enum(["Инженер", "Супервайзер", "Админ"], {
+  fullName: z.string().min(2, "ФИО должно содержать минимум 2 символа"),
+  email: z.string().email("Укажите корректный email"),
+  password: z.string().min(8, "Минимум 8 символов"),
+  role: z.enum(["ENGINEER", "SUPERVISOR", "ADMIN"], {
     required_error: "Выберите роль",
   }),
-  city: z.string().min(2, "Укажите город"),
-  zone: z.string().optional(),
+  phone: z.string().optional(),
+  cityId: z.string().optional(),
+  districtId: z.string().optional(),
   isActive: z.boolean().default(true),
 });
 
@@ -29,70 +47,89 @@ type UserFormData = z.infer<typeof userSchema>;
 
 export default function Users() {
   const [q, setQ] = useState("");
-  const [role, setRole] = useState<string>("Все");
+  const [roleFilter, setRoleFilter] = useState<string>("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [users, setUsers] = useState<User[]>(mockUsers);
-
-  const roles = ["Все", "Инженер", "Супервайзер", "Админ"];
+  const queryClient = useQueryClient();
+  const defaultValues: UserFormData = {
+    fullName: "",
+    email: "",
+    password: "",
+    role: "ENGINEER",
+    phone: "",
+    cityId: "",
+    districtId: "",
+    isActive: true,
+  };
 
   const form = useForm<UserFormData>({
     resolver: zodResolver(userSchema),
-    defaultValues: {
-      name: "",
-      role: "Инженер",
-      city: "",
-      zone: undefined,
-      isActive: true,
+    defaultValues,
+  });
+  const selectedCityId = form.watch("cityId");
+  const { data: usersData, isLoading } = useQuery<ApiUser[]>({
+    queryKey: ['users'],
+    queryFn: () => api.getUsers(),
+  });
+  const users = usersData ?? [];
+  const { data: cities = [] } = useQuery({
+    queryKey: ['cities'],
+    queryFn: () => api.getCities(),
+  });
+  const { data: districts = [] } = useQuery({
+    queryKey: ['districts', selectedCityId, 'users'],
+    queryFn: () => api.getDistricts(selectedCityId as string),
+    enabled: Boolean(selectedCityId),
+  });
+  const createMutation = useMutation({
+    mutationFn: (payload: UserCreatePayload) => api.createUser(payload),
+    onSuccess: () => {
+      toast.success("Сотрудник успешно добавлен");
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setDialogOpen(false);
+      form.reset({ ...defaultValues });
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Ошибка при добавлении сотрудника");
     },
   });
+  const handleDialogChange = (open: boolean) => {
+    setDialogOpen(open);
+    if (!open) {
+      form.reset({ ...defaultValues });
+    }
+  };
+
+  const onSubmit = (data: UserFormData) => {
+    const payload: UserCreatePayload = {
+      email: data.email.trim(),
+      password: data.password,
+      full_name: data.fullName.trim(),
+      role: data.role,
+      is_active: data.isActive,
+      phone: data.phone?.trim() ? data.phone.trim() : undefined,
+      city_id: data.cityId ? data.cityId : undefined,
+      district_id: data.districtId ? data.districtId : undefined,
+    };
+
+    createMutation.mutate(payload);
+  };
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
-    return users.filter(u => {
-      const byQ = !ql || [u.name, u.city, u.zone ?? ""].some(x => x.toLowerCase().includes(ql));
-      const byRole = role === "Все" || u.role === role;
+    return users.filter((user) => {
+      const snapshot = [
+        user.full_name,
+        user.email,
+        user.city?.name ?? "",
+        user.district?.name ?? "",
+        user.phone ?? "",
+      ];
+      const byQ = !ql || snapshot.some((value) => value.toLowerCase().includes(ql));
+      const byRole = roleFilter === "ALL" || user.role === roleFilter;
       return byQ && byRole;
     });
-  }, [q, role, users]);
+  }, [q, roleFilter, users]);
 
-  useEffect(() => {
-    if (!dialogOpen) {
-      form.reset({
-        name: "",
-        role: "Инженер",
-        city: "",
-        zone: undefined,
-        isActive: true,
-      });
-    }
-  }, [dialogOpen, form]);
-
-  const onSubmit = (data: UserFormData) => {
-    try {
-      const newUser: User = {
-        id: String(users.length + 1),
-        name: data.name,
-        role: data.role,
-        city: data.city,
-        zone: data.zone || undefined,
-        lastLogin: "-",
-        isActive: data.isActive,
-      };
-      setUsers([...users, newUser]);
-      toast.success("Сотрудник успешно добавлен");
-      setDialogOpen(false);
-      form.reset({
-        name: "",
-        role: "Инженер",
-        city: "",
-        zone: undefined,
-        isActive: true,
-      });
-    } catch (error) {
-      console.error("Ошибка при добавлении сотрудника:", error);
-      toast.error("Ошибка при добавлении сотрудника");
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -101,14 +138,16 @@ export default function Users() {
           <CardTitle>Фильтры</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
-          <Input placeholder="Поиск по имени/городу/зоне" value={q} onChange={e => setQ(e.target.value)} />
-          <Select value={role} onValueChange={setRole}>
+          <Input placeholder="Поиск по имени/email/городу" value={q} onChange={e => setQ(e.target.value)} />
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
             <SelectTrigger>
               <SelectValue placeholder="Роль" />
             </SelectTrigger>
             <SelectContent>
-              {roles.map(r => (
-                <SelectItem key={r} value={r}>{r}</SelectItem>
+              {ROLE_FILTER_OPTIONS.map(option => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -118,7 +157,7 @@ export default function Users() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle>Сотрудники ({rows.length})</CardTitle>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog open={dialogOpen} onOpenChange={handleDialogChange}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -131,96 +170,153 @@ export default function Users() {
               </DialogHeader>
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="fullName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>ФИО</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Иванов Иван Иванович" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input type="email" placeholder="user@example.com" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Пароль</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="Минимум 8 символов" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="role"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Роль</FormLabel>
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Выберите роль" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
                   <FormField
                     control={form.control}
-                    name="name"
+                    name="phone"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>ФИО</FormLabel>
+                        <FormLabel>Телефон (необязательно)</FormLabel>
                         <FormControl>
-                          <Input placeholder="Иванов Иван Иванович" {...field} />
+                          <Input type="tel" placeholder="+7 (999) 123-45-67" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
-                  <FormField
-                    control={form.control}
-                    name="role"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Роль</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите роль" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="Инженер">Инженер</SelectItem>
-                            <SelectItem value="Супервайзер">Супервайзер</SelectItem>
-                            <SelectItem value="Админ">Админ</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="cityId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Город</FormLabel>
+                          <Select
+                            value={field.value}
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              form.setValue("districtId", "");
+                            }}
+                            disabled={!cities.length}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Выберите город" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {cities.map((city: any) => (
+                                <SelectItem key={city.id} value={city.id}>
+                                  {city.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="districtId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Район (необязательно)</FormLabel>
+                          <Select
+                            value={field.value ?? ""}
+                            onValueChange={field.onChange}
+                            disabled={!selectedCityId || !districts.length}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Выберите район" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {districts.map((district: any) => (
+                                <SelectItem key={district.id} value={district.id}>
+                                  {district.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
 
                   <FormField
                     control={form.control}
-                    name="city"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Город</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите город" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {cities.map(city => (
-                              <SelectItem key={city} value={city}>{city}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="zone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Зона (необязательно)</FormLabel>
-                        <Select 
-                          onValueChange={(value) => {
-                            field.onChange(value);
-                          }} 
-                          value={field.value || undefined}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите зону (необязательно)" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {districts.map(zone => (
-                              <SelectItem key={zone} value={zone}>{zone}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control} 
                     name="isActive"
                     render={({ field }) => (
                       <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
@@ -228,23 +324,19 @@ export default function Users() {
                           <FormLabel>Активен</FormLabel>
                         </div>
                         <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
                       </FormItem>
                     )}
                   />
 
                   <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => {
-                      setDialogOpen(false);
-                      form.reset();
-                    }}>
+                    <Button type="button" variant="outline" onClick={() => handleDialogChange(false)}>
                       Отмена
                     </Button>
-                    <Button type="submit">Добавить</Button>
+                    <Button type="submit" disabled={createMutation.isPending}>
+                      {createMutation.isPending ? "Добавление..." : "Добавить"}
+                    </Button>
                   </DialogFooter>
                 </form>
               </Form>
@@ -256,28 +348,50 @@ export default function Users() {
             <TableHeader>
               <TableRow>
                 <TableHead>ФИО</TableHead>
+                <TableHead>Email</TableHead>
                 <TableHead>Роль</TableHead>
                 <TableHead>Город</TableHead>
-                <TableHead>Зона</TableHead>
+                <TableHead>Район</TableHead>
+                <TableHead>Телефон</TableHead>
                 <TableHead>Последний вход</TableHead>
                 <TableHead>Активен</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map(u => (
-                <TableRow key={u.id} className="hover:bg-muted/50">
-                  <TableCell>{u.name}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{u.role}</Badge>
-                  </TableCell>
-                  <TableCell>{u.city}</TableCell>
-                  <TableCell>{u.zone ?? "-"}</TableCell>
-                  <TableCell>{u.lastLogin}</TableCell>
-                  <TableCell>
-                    <Switch checked={u.isActive} disabled aria-readonly />
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                    Загрузка...
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                    Нет сотрудников
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((user) => (
+                  <TableRow key={user.id} className="hover:bg-muted/50">
+                    <TableCell className="font-medium">{user.full_name}</TableCell>
+                    <TableCell>{user.email}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{ROLE_LABELS[user.role] ?? user.role}</Badge>
+                    </TableCell>
+                    <TableCell>{user.city?.name || "-"}</TableCell>
+                    <TableCell>{user.district?.name || "-"}</TableCell>
+                    <TableCell>{user.phone || "-"}</TableCell>
+                    <TableCell>
+                      {user.last_login_at
+                        ? new Date(user.last_login_at).toLocaleString('ru-RU')
+                        : "-"}
+                    </TableCell>
+                    <TableCell>
+                      <Switch checked={user.is_active} disabled aria-readonly />
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -285,5 +399,3 @@ export default function Users() {
     </div>
   );
 }
-
-

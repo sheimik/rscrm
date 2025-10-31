@@ -1,6 +1,7 @@
 /**
  * API клиент для взаимодействия с бэкендом
  */
+import type { ObjectCreatePayload, ObjectUpdatePayload, UserCreatePayload } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -121,14 +122,14 @@ export class ApiClient {
     return this.request(`/api/v1/objects/${id}`);
   }
 
-  async createObject(data: any) {
+  async createObject(data: ObjectCreatePayload) {
     return this.request('/api/v1/objects', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async updateObject(id: string, data: any) {
+  async updateObject(id: string, data: ObjectUpdatePayload) {
     return this.request(`/api/v1/objects/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -246,7 +247,18 @@ export class ApiClient {
     const query = cityId ? `?city_id=${cityId}` : '';
     return this.request(`/api/v1/dictionaries/districts${query}`);
   }
+
+  // Users
+  async getUsers() {
+    return this.request('/api/v1/users');
+  }
+
+  async createUser(data: UserCreatePayload) {
+    return this.request('/api/v1/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
 }
 
 export const api = new ApiClient();
-

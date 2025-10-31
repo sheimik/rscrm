@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -13,9 +13,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Plus, FileDown, Upload, Filter, MapIcon, List } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { toast } from "sonner";
+import type { ObjectCreatePayload } from "@/lib/types";
 import {
   Sheet,
   SheetContent,
@@ -32,7 +32,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { buildObjectsCsv, importObjectsFromCsv } from "@/lib/objectImportExport";
 
 const statusMap: Record<string, string> = {
   "NEW": "Новый",
@@ -48,16 +50,32 @@ const typeMap: Record<string, string> = {
   "SHOPPING_CENTER": "ТЦ",
   "SCHOOL": "Школа",
   "HOSPITAL": "Больница",
+  "HOTEL": "Отель",
+  "CAFE": "Кафе",
+  "OTHER": "Другое",
 };
 
 export default function Objects() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [view, setView] = useState<"list" | "map">("list");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCity, setSelectedCity] = useState<string>("all");
   const [selectedDistrict, setSelectedDistrict] = useState<string>("all");
   const [selectedType, setSelectedType] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    type: "MKD",
+    status: "NEW",
+    address: "",
+    cityId: "",
+    districtId: "",
+    contactName: "",
+    contactPhone: "",
+  });
+  const [createCityId, setCreateCityId] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Загружаем данные
   const { data: objectsData, isLoading } = useQuery({
@@ -82,9 +100,40 @@ export default function Objects() {
     enabled: selectedCity !== "all",
   });
 
+  const { data: createDistricts = [] } = useQuery({
+    queryKey: ['districts', createCityId, 'create'],
+    queryFn: () => api.getDistricts(createCityId),
+    enabled: Boolean(createCityId),
+  });
+
   const objects = objectsData?.items || [];
   const cities = citiesData || [];
   const districts = districtsData || [];
+  const resetCreateForm = () => {
+    setCreateForm({
+      type: "MKD",
+      status: "NEW",
+      address: "",
+      cityId: "",
+      districtId: "",
+      contactName: "",
+      contactPhone: "",
+    });
+    setCreateCityId("");
+  };
+
+  const createMutation = useMutation({
+    mutationFn: (payload: ObjectCreatePayload) => api.createObject(payload),
+    onSuccess: () => {
+      toast.success("Объект создан");
+      setIsCreateOpen(false);
+      resetCreateForm();
+      queryClient.invalidateQueries({ queryKey: ['objects'] });
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Не удалось создать объект");
+    },
+  });
 
   const filteredBuildings = useMemo(() => {
     return objects.filter((obj: any) => {
@@ -98,6 +147,20 @@ export default function Objects() {
     });
   }, [objects, searchQuery, selectedCity, selectedDistrict, selectedType, selectedStatus]);
 
+  const typeNameToEnum = useMemo(() => {
+    return Object.entries(typeMap).reduce<Record<string, string>>((acc, [enumValue, label]) => {
+      acc[label.toLowerCase()] = enumValue;
+      return acc;
+    }, {});
+  }, []);
+
+  const statusNameToEnum = useMemo(() => {
+    return Object.entries(statusMap).reduce<Record<string, string>>((acc, [enumValue, label]) => {
+      acc[label.toLowerCase()] = enumValue;
+      return acc;
+    }, {});
+  }, []);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "NEW": return "bg-blue-500";
@@ -108,12 +171,98 @@ export default function Objects() {
       default: return "bg-gray-500";
     }
   };
+  const handleCreateDialogChange = (open: boolean) => {
+    setIsCreateOpen(open);
+    if (!open) {
+      resetCreateForm();
+    }
+  };
 
-  const handleAction = (action: string) => {
-    toast.info(`Демо-режим: ${action}`);
+  const handleCreateSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!createForm.address.trim()) {
+      toast.error("Укажите адрес");
+      return;
+    }
+    if (!createForm.cityId) {
+      toast.error("Выберите город");
+      return;
+    }
+
+    createMutation.mutate({
+      type: createForm.type,
+      address: createForm.address.trim(),
+      city_id: createForm.cityId,
+      district_id: createForm.districtId || undefined,
+      status: createForm.status,
+      contact_name: createForm.contactName.trim() || undefined,
+      contact_phone: createForm.contactPhone.trim() || undefined,
+    });
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const { created, skipped } = await importObjectsFromCsv(file, {
+        typeNameToEnum,
+        statusNameToEnum,
+        createObject: api.createObject.bind(api),
+      });
+
+      if (created > 0) {
+        await queryClient.invalidateQueries({ queryKey: ['objects'] });
+      }
+
+      if (created === 0 && skipped === 0) {
+        toast.info("Файл не содержит данных");
+      } else {
+        toast.success(`Импорт завершён. Успешно: ${created}, пропущено: ${skipped}`);
+      }
+    } catch (error: any) {
+      toast.error(error?.message || "Не удалось импортировать файл");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleExport = () => {
+    if (!objects.length) {
+      toast.info("Нет данных для экспорта");
+      return;
+    }
+
+    const csvContent = buildObjectsCsv(objects);
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `objects_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    toast.success("Экспорт выполнен");
   };
 
   return (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv"
+        className="hidden"
+        onChange={handleFileSelected}
+      />
     <div className="space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -184,6 +333,9 @@ export default function Objects() {
                       <SelectItem value="SHOPPING_CENTER">ТЦ</SelectItem>
                       <SelectItem value="SCHOOL">Школа</SelectItem>
                       <SelectItem value="HOSPITAL">Больница</SelectItem>
+                      <SelectItem value="HOTEL">Отель</SelectItem>
+                      <SelectItem value="CAFE">Кафе</SelectItem>
+                      <SelectItem value="OTHER">Другое</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -222,15 +374,153 @@ export default function Objects() {
           >
             <MapIcon className="h-4 w-4" />
           </Button>
-          <Button onClick={() => handleAction("Добавить объект")}>
-            <Plus className="mr-2 h-4 w-4" />
-            Добавить
-          </Button>
-          <Button variant="outline" onClick={() => handleAction("Импорт")}>
+          <Dialog open={isCreateOpen} onOpenChange={handleCreateDialogChange}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Добавить
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[520px]">
+              <DialogHeader>
+                <DialogTitle>Новый объект</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleCreateSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Тип объекта</Label>
+                  <Select
+                    value={createForm.type}
+                    onValueChange={(value) =>
+                      setCreateForm((prev) => ({ ...prev, type: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MKD">МКД</SelectItem>
+                      <SelectItem value="BUSINESS_CENTER">Бизнес-центр</SelectItem>
+                      <SelectItem value="SHOPPING_CENTER">ТЦ</SelectItem>
+                      <SelectItem value="SCHOOL">Школа</SelectItem>
+                      <SelectItem value="HOSPITAL">Больница</SelectItem>
+                      <SelectItem value="HOTEL">Отель</SelectItem>
+                      <SelectItem value="CAFE">Кафе</SelectItem>
+                      <SelectItem value="OTHER">Другое</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Статус</Label>
+                  <Select
+                    value={createForm.status}
+                    onValueChange={(value) =>
+                      setCreateForm((prev) => ({ ...prev, status: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NEW">Новый</SelectItem>
+                      <SelectItem value="INTEREST">В работе</SelectItem>
+                      <SelectItem value="CALLBACK">Ожидание</SelectItem>
+                      <SelectItem value="DONE">Завершён</SelectItem>
+                      <SelectItem value="REJECTED">Отказ</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Адрес</Label>
+                  <Input
+                    placeholder="ул. Пушкина, д. 12"
+                    value={createForm.address}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({ ...prev, address: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Город</Label>
+                    <Select
+                      value={createForm.cityId}
+                      onValueChange={(value) => {
+                        setCreateForm((prev) => ({ ...prev, cityId: value, districtId: "" }));
+                        setCreateCityId(value);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите город" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cities.map((city: any) => (
+                          <SelectItem key={city.id} value={city.id}>
+                            {city.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Район</Label>
+                    <Select
+                      value={createForm.districtId}
+                      onValueChange={(value) =>
+                        setCreateForm((prev) => ({ ...prev, districtId: value }))
+                      }
+                      disabled={!createCityId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите район" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {createDistricts.map((district: any) => (
+                          <SelectItem key={district.id} value={district.id}>
+                            {district.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Контактное лицо</Label>
+                    <Input
+                      placeholder="ФИО"
+                      value={createForm.contactName}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({ ...prev, contactName: event.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Телефон контакта</Label>
+                    <Input
+                      placeholder="+7 (___) ___-__-__"
+                      value={createForm.contactPhone}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({ ...prev, contactPhone: event.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => handleCreateDialogChange(false)}>
+                    Отмена
+                  </Button>
+                  <Button type="submit" disabled={createMutation.isPending}>
+                    {createMutation.isPending ? "Создание..." : "Создать"}
+                  </Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Button variant="outline" onClick={handleImportClick}>
             <Upload className="mr-2 h-4 w-4" />
             Импорт
           </Button>
-          <Button variant="outline" onClick={() => handleAction("Экспорт")}>
+          <Button variant="outline" onClick={handleExport}>
             <FileDown className="mr-2 h-4 w-4" />
             Экспорт
           </Button>
@@ -250,18 +540,19 @@ export default function Objects() {
                 <TableHead>Визиты</TableHead>
                 <TableHead>Последний визит</TableHead>
                 <TableHead>Ответственный</TableHead>
+                <TableHead>Контакт</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
                     Загрузка...
                   </TableCell>
                 </TableRow>
               ) : filteredBuildings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
                     Нет данных. Измените фильтр или создайте запись.
                   </TableCell>
                 </TableRow>
@@ -290,6 +581,12 @@ export default function Objects() {
                     <TableCell>{building.visits_count || 0}</TableCell>
                     <TableCell>{building.last_visit_at ? new Date(building.last_visit_at).toLocaleDateString('ru-RU') : "-"}</TableCell>
                     <TableCell>{building.responsible_user?.full_name || "-"}</TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        <div>{building.contact_name || "-"}</div>
+                        <div className="text-muted-foreground text-xs">{building.contact_phone || ""}</div>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -310,5 +607,6 @@ export default function Objects() {
         </Card>
       )}
     </div>
+    </>
   );
 }
