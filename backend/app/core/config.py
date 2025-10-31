@@ -1,16 +1,21 @@
 """
 Конфигурация приложения через pydantic-settings
 """
+from pathlib import Path
 from typing import List
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+ENV_FILES = [BACKEND_ROOT / ".env", ".env"]
 
 
 class Settings(BaseSettings):
     """Настройки приложения"""
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[str(path) for path in ENV_FILES],
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -66,4 +71,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
