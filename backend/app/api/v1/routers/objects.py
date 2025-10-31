@@ -73,6 +73,8 @@ async def create_object(
         status=data.status,
         tags=data.tags,
         responsible_user_id=data.responsible_user_id,
+        contact_name=data.contact_name,
+        contact_phone=data.contact_phone,
         created_by=current_user.id,
     )
     
@@ -144,4 +146,3 @@ async def update_object(
     await db.commit()
     
     return ObjectOut.model_validate(obj)
-

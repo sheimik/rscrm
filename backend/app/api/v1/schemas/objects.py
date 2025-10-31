@@ -20,6 +20,8 @@ class ObjectBase(BaseModel):
     status: ObjectStatus = ObjectStatus.NEW
     tags: list[str] = Field(default_factory=list)
     responsible_user_id: Optional[UUID] = None
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_phone: Optional[str] = Field(None, max_length=32)
 
 
 class ObjectCreate(ObjectBase):
@@ -38,6 +40,8 @@ class ObjectUpdate(BaseModel):
     status: Optional[ObjectStatus] = None
     tags: Optional[list[str]] = None
     responsible_user_id: Optional[UUID] = None
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_phone: Optional[str] = Field(None, max_length=32)
     version: Optional[int] = None  # Для optimistic locking
 
 
@@ -54,4 +58,3 @@ class ObjectOut(ObjectBase):
     
     class Config:
         from_attributes = True
-

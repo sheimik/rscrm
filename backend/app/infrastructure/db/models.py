@@ -142,6 +142,8 @@ class Object(Base):
     tags: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True, default=list)
     
     responsible_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     
     visits_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_visit_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -169,6 +171,7 @@ class Object(Base):
         Index("ix_objects_version", "version"),
         Index("ix_objects_last_visit_at", "last_visit_at"),
         Index("ix_objects_gps", "gps_lat", "gps_lng"),  # Для гео-поиска (в Postgres будет GIST)
+        Index("ix_objects_contact_phone", "contact_phone"),
     )
 
 
@@ -394,4 +397,3 @@ class SyncToken(Base):
     __table_args__ = (
         Index("ix_sync_token_table_seen", "table_name", "last_seen_at"),
     )
-
