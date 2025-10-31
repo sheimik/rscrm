@@ -7,6 +7,9 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.db.models import AuditLog, ActionType, User
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class AuditService:
@@ -27,6 +30,14 @@ class AuditService:
         user_agent: Optional[str] = None,
     ) -> AuditLog:
         """Записать действие в аудит"""
+        logger.debug(
+            "Logging audit action",
+            action=action.value,
+            entity_type=entity_type,
+            entity_id=str(entity_id),
+            actor_id=str(actor_id) if actor_id else None,
+        )
+        
         audit_log = AuditLog(
             actor_id=actor_id,
             action=action,
@@ -41,6 +52,15 @@ class AuditService:
         
         self.session.add(audit_log)
         await self.session.flush()
+        
+        logger.info(
+            "Audit action logged",
+            audit_log_id=str(audit_log.id),
+            action=action.value,
+            entity_type=entity_type,
+            entity_id=str(entity_id),
+            actor_id=str(actor_id) if actor_id else None,
+        )
         
         return audit_log
     

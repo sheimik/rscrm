@@ -14,9 +14,12 @@ from app.infrastructure.db.models import User, Visit, VisitStatus
 from app.infrastructure.db.repositories.visit_repository import VisitRepository
 from app.core.pagination import get_pagination_offset
 from app.core.errors import NotFoundError, ConflictError
+from app.core.logging_config import get_logger
+from app.domain.services.audit_service import AuditService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 @router.get("/", response_model=PageResponse[VisitOut])
@@ -69,6 +72,13 @@ async def create_visit(
     db: AsyncSession = Depends(get_db),
 ):
     """Создать визит"""
+    logger.info(
+        "Creating visit",
+        user_id=str(current_user.id),
+        user_name=current_user.full_name,
+        object_id=str(data.object_id),
+        scheduled_at=str(data.scheduled_at) if data.scheduled_at else None,
+    )
     
     from app.infrastructure.db.models import Visit as VisitModel
     
@@ -89,6 +99,32 @@ async def create_visit(
     db.add(new_visit)
     await db.commit()
     await db.refresh(new_visit)
+    
+    # Логируем в аудит
+    try:
+        audit_service = AuditService(db)
+        after_data = {
+            "id": str(new_visit.id),
+            "object_id": str(new_visit.object_id),
+            "status": new_visit.status.value,
+            "engineer_id": str(new_visit.engineer_id),
+        }
+        await audit_service.log_create(
+            entity_type="visit",
+            entity_id=new_visit.id,
+            actor_id=current_user.id,
+            after=after_data,
+        )
+        await db.commit()
+        logger.debug("Audit log created for visit creation", visit_id=str(new_visit.id))
+    except Exception as e:
+        logger.error("Failed to create audit log", error=str(e), visit_id=str(new_visit.id))
+    
+    logger.info(
+        "Visit created successfully",
+        visit_id=str(new_visit.id),
+        user_id=str(current_user.id),
+    )
     
     return VisitOut.model_validate(new_visit)
 

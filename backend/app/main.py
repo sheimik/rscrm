@@ -8,11 +8,15 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.errors import AppError, app_error_handler
+from app.core.logging_config import setup_logging
 from app.api.v1 import api_router as api_router_v1
 from app.api.health import router as health_router
 from app.middlewares.logging import LoggingMiddleware
 from app.middlewares.request_id import RequestIDMiddleware
 from app.middlewares.audit import AuditMiddleware
+
+# Инициализация логирования
+setup_logging(log_level=settings.LOG_LEVEL, log_file="logs/app.log")
 
 
 @asynccontextmanager

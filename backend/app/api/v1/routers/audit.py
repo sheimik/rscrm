@@ -70,8 +70,26 @@ async def list_audit_logs(
     
     pages = (total + params.limit - 1) // params.limit if total > 0 else 0
     
+    # Преобразуем с учетом relationship actor
+    audit_items = []
+    for item in items:
+        actor_name = item.actor.full_name if item.actor else None
+        audit_items.append(AuditLogOut(
+            id=item.id,
+            actor_id=item.actor_id,
+            actor_name=actor_name,
+            action=item.action,
+            entity_type=item.entity_type,
+            entity_id=item.entity_id,
+            before_json=item.before_json,
+            after_json=item.after_json,
+            ip_address=item.ip_address,
+            user_agent=item.user_agent,
+            occurred_at=item.occurred_at,
+        ))
+    
     return PageResponse(
-        items=[AuditLogOut.model_validate(item) for item in items],
+        items=audit_items,
         page=params.page,
         limit=params.limit,
         total=total,
@@ -93,5 +111,19 @@ async def get_audit_log(
         from app.core.errors import NotFoundError
         raise NotFoundError("AuditLog", log_id)
     
-    return AuditLogOut.model_validate(log)
+    actor_name = log.actor.full_name if log.actor else None
+    
+    return AuditLogOut(
+        id=log.id,
+        actor_id=log.actor_id,
+        actor_name=actor_name,
+        action=log.action,
+        entity_type=log.entity_type,
+        entity_id=log.entity_id,
+        before_json=log.before_json,
+        after_json=log.after_json,
+        ip_address=log.ip_address,
+        user_agent=log.user_agent,
+        occurred_at=log.occurred_at,
+    )
 

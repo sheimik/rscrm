@@ -259,6 +259,29 @@ export class ApiClient {
       body: JSON.stringify(data),
     });
   }
+
+  // Audit
+  async getAuditLogs(params?: {
+    actor_id?: string;
+    entity_type?: string;
+    entity_id?: string;
+    action?: string;
+    since?: string;
+    until?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          query.append(key, String(value));
+        }
+      });
+    }
+    const queryString = query.toString();
+    return this.request(`/api/v1/audit${queryString ? '?' + queryString : ''}`);
+  }
 }
 
 export const api = new ApiClient();
