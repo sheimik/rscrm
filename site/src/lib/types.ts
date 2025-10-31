@@ -74,8 +74,11 @@ export interface ApiObject {
   contact_phone?: string | null;
   visits_count?: number;
   last_visit_at?: string | null;
+  created_by?: string;
+  updated_by?: string | null;
   created_at?: string;
   updated_at?: string;
+  version?: number;
   city?: ApiCity | null;
   district?: ApiDistrict | null;
 }

@@ -29,7 +29,7 @@ export class ApiClient {
     }
   }
 
-  private async request<T>(
+  private async request<T = unknown>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
@@ -60,7 +60,7 @@ export class ApiClient {
       return null as T;
     }
 
-    return response.json();
+    return response.json() as Promise<T>;
   }
 
   // Auth
@@ -300,6 +300,26 @@ export class ApiClient {
     });
   }
 
+  // Supervisor tasks (для мобильного приложения)
+  async getMyTasks(params?: {
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          query.append(key, String(value));
+        }
+      });
+    }
+    const queryString = query.toString();
+    return this.request(`/api/v1/objects/my-tasks${queryString ? '?' + queryString : ''}`);
+  }
+
+  // Users
   async updateUser(id: string, data: UserUpdatePayload) {
     return this.request(`/api/v1/users/${id}`, {
       method: 'PATCH',

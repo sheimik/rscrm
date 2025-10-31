@@ -29,7 +29,10 @@ export default function ObjectDetail() {
     error: objectError,
   } = useQuery<ApiObject, Error>({
     queryKey: ["object", id],
-    queryFn: () => api.getObject(id as string),
+    queryFn: async () => {
+      const result = await api.getObject(id as string);
+      return result as ApiObject;
+    },
     enabled: Boolean(id),
   });
 

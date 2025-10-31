@@ -15,7 +15,7 @@ import { Plus, FileDown, Upload, Filter, MapIcon, List, UserPlus } from "lucide-
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { ObjectCreatePayload } from "@/lib/types";
+import type { ObjectCreatePayload, ApiObject, PageResponse, ApiCity, ApiDistrict, ApiUser } from "@/lib/types";
 import {
   Sheet,
   SheetContent,
@@ -82,37 +82,49 @@ export default function Objects() {
   });
 
   // Загружаем данные
-  const { data: objectsData, isLoading } = useQuery({
+  const { data: objectsData, isLoading } = useQuery<PageResponse<ApiObject>>({
     queryKey: ['objects', selectedCity !== "all" ? selectedCity : null, selectedDistrict !== "all" ? selectedDistrict : null, selectedStatus !== "all" ? selectedStatus : null, searchQuery],
-    queryFn: () => api.getObjects({
-      city_id: selectedCity !== "all" ? selectedCity : undefined,
-      district_id: selectedDistrict !== "all" ? selectedDistrict : undefined,
-      status: selectedStatus !== "all" ? selectedStatus as any : undefined,
-      search: searchQuery || undefined,
-      limit: 100,
-    }),
+    queryFn: async () => {
+      const result = await api.getObjects({
+        city_id: selectedCity !== "all" ? selectedCity : undefined,
+        district_id: selectedDistrict !== "all" ? selectedDistrict : undefined,
+        status: selectedStatus !== "all" ? selectedStatus as any : undefined,
+        search: searchQuery || undefined,
+        limit: 100,
+      });
+      return result as PageResponse<ApiObject>;
+    },
   });
 
-  const { data: citiesData } = useQuery({
+  const { data: citiesData } = useQuery<ApiCity[]>({
     queryKey: ['cities'],
-    queryFn: () => api.getCities(),
+    queryFn: async () => {
+      const result = await api.getCities();
+      return result as ApiCity[];
+    },
   });
 
-  const { data: districtsData } = useQuery({
+  const { data: districtsData } = useQuery<ApiDistrict[]>({
     queryKey: ['districts', selectedCity !== "all" ? selectedCity : null],
-    queryFn: () => api.getDistricts(selectedCity !== "all" ? selectedCity : undefined),
+    queryFn: async () => {
+      const result = await api.getDistricts(selectedCity !== "all" ? selectedCity : undefined);
+      return result as ApiDistrict[];
+    },
     enabled: selectedCity !== "all",
   });
 
-  const { data: createDistricts = [] } = useQuery({
+  const { data: createDistricts = [] } = useQuery<ApiDistrict[]>({
     queryKey: ['districts', createCityId, 'create'],
-    queryFn: () => api.getDistricts(createCityId),
+    queryFn: async () => {
+      const result = await api.getDistricts(createCityId);
+      return result as ApiDistrict[];
+    },
     enabled: Boolean(createCityId),
   });
 
-  const objects = objectsData?.items || [];
-  const cities = citiesData || [];
-  const districts = districtsData || [];
+  const objects: ApiObject[] = objectsData?.items || [];
+  const cities: ApiCity[] = citiesData || [];
+  const districts: ApiDistrict[] = districtsData || [];
   const resetCreateForm = () => {
     setCreateForm({
       type: "MKD",
@@ -140,7 +152,7 @@ export default function Objects() {
   });
 
   const filteredBuildings = useMemo(() => {
-    return objects.filter((obj: any) => {
+    return objects.filter((obj: ApiObject) => {
       const matchesSearch = !searchQuery || obj.address.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCity = selectedCity === "all" || obj.city_id === selectedCity;
       const matchesDistrict = selectedDistrict === "all" || obj.district_id === selectedDistrict;
@@ -300,7 +312,7 @@ export default function Objects() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все города</SelectItem>
-                      {cities.map((city: any) => (
+                      {cities.map((city) => (
                         <SelectItem key={city.id} value={city.id}>
                           {city.name}
                         </SelectItem>
@@ -316,7 +328,7 @@ export default function Objects() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все районы</SelectItem>
-                      {districts.map((district: any) => (
+                      {districts.map((district) => (
                         <SelectItem key={district.id} value={district.id}>
                           {district.name}
                         </SelectItem>
@@ -457,7 +469,7 @@ export default function Objects() {
                         <SelectValue placeholder="Выберите город" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cities.map((city: any) => (
+                        {cities.map((city) => (
                           <SelectItem key={city.id} value={city.id}>
                             {city.name}
                           </SelectItem>
@@ -478,7 +490,7 @@ export default function Objects() {
                         <SelectValue placeholder="Выберите район" />
                       </SelectTrigger>
                       <SelectContent>
-                        {createDistricts.map((district: any) => (
+                        {createDistricts.map((district) => (
                           <SelectItem key={district.id} value={district.id}>
                             {district.name}
                           </SelectItem>
@@ -683,9 +695,12 @@ function DelegationModal({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSupervisor, setSelectedSupervisor] = useState<string | null>(null);
 
-  const { data: supervisors, isLoading } = useQuery({
+  const { data: supervisors, isLoading } = useQuery<ApiUser[]>({
     queryKey: ['supervisors', searchQuery],
-    queryFn: () => api.searchSupervisors(searchQuery || undefined),
+    queryFn: async () => {
+      const result = await api.searchSupervisors(searchQuery || undefined);
+      return result as ApiUser[];
+    },
     enabled: open,
   });
 
@@ -734,7 +749,7 @@ function DelegationModal({
                 </div>
               ) : supervisors && supervisors.length > 0 ? (
                 <div className="divide-y">
-                  {supervisors.map((supervisor: any) => (
+                  {supervisors.map((supervisor) => (
                     <div
                       key={supervisor.id}
                       className={`p-3 cursor-pointer hover:bg-muted ${
